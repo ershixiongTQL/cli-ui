@@ -1,0 +1,312 @@
+package completer
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+
+	bg "github.com/yourbasic/graph"
+
+	docCommon "github.com/wubin1989/unioffice/common"
+	"github.com/wubin1989/unioffice/document"
+	"github.com/wubin1989/unioffice/measurement"
+)
+
+type ParamGraph struct {
+	command *schemaCommand
+	ctx     cmdContext
+}
+
+func (g *ParamGraph) init(cmd *schemaCommand) {
+	g.command = cmd
+	g.ctx.init()
+}
+
+func (g *ParamGraph) vToParam(v int) *schemaParam {
+	for i, p := range append(g.command.staticParams, g.command.dynamParams...) {
+		if i == v {
+			return p
+		}
+	}
+	return nil
+}
+
+func (g *ParamGraph) paramToV(theParam *schemaParam) (v int) {
+	for i, p := range append(g.command.staticParams, g.command.dynamParams...) {
+		if p.NameDesc == theParam.NameDesc {
+			return i
+		}
+	}
+	return -1
+}
+
+func (g *ParamGraph) getNextParams(curr *schemaParam) (nexts []*schemaParam) {
+	v := g.paramToV(curr)
+	if v >= len(g.command.staticParams)-1 {
+		return g.command.dynamParams
+	} else {
+		return []*schemaParam{g.vToParam(v + 1)}
+	}
+}
+
+func (g *ParamGraph) Order() int {
+	return len(g.command.dynamParams) + len(g.command.staticParams)
+}
+
+func (g *ParamGraph) Visit(v int, do func(w int, c int64) (skip bool)) (aborted bool) {
+
+	thisParam := g.vToParam(v)
+
+	if thisParam == nil {
+		return true
+	}
+
+	nexts := g.getNextParams(thisParam)
+
+	if thisParam.Type == paramTypePlain {
+
+		g.ctx.append(thisParam.NameDesc.Name, "<"+thisParam.NameDesc.Name+">")
+		for _, n := range nexts {
+			if n.conditionCheck(&g.ctx) {
+				if do(g.paramToV(n), 0) {
+					return true
+				}
+			}
+		}
+		g.ctx.drop()
+
+	} else if thisParam.Type == paramTypeSelection {
+
+		sels, _, _ := rangeDecodeSelection(thisParam.Range)
+
+		for i, sel := range sels {
+
+			g.ctx.append(thisParam.NameDesc.Name, sel)
+
+			for _, n := range nexts {
+
+				if n.conditionCheck(&g.ctx) {
+					if do(g.paramToV(n), int64(i)+1) {
+						return true
+					}
+				}
+			}
+
+			g.ctx.drop()
+		}
+
+	} else {
+
+		panic("invalid param type: " + thisParam.Type.String())
+
+	}
+	return
+}
+
+type dotPath struct {
+	from int
+	cost int
+}
+
+func (g *ParamGraph) dot() string {
+
+	re := regexp.MustCompile(`\((\d+)\s+(\d+)\)(?::(\d+))?`)
+	graphStr := bg.String(g)
+	edgesRaw := re.FindAllStringSubmatch(graphStr, -1)
+
+	dotPaths := map[int][]dotPath{}
+
+	for _, e := range edgesRaw {
+		from, _ := strconv.Atoi(e[1])
+		to, _ := strconv.Atoi(e[2])
+		cost, _ := strconv.Atoi(e[3])
+		dotPaths[to] = append(dotPaths[to], dotPath{from: from, cost: cost})
+	}
+
+	if len(edgesRaw) != 0 {
+		dotPaths[0] = append(dotPaths[0], dotPath{from: -1, cost: 0})
+	}
+
+	nodesSplit := map[int][][]int{}
+
+	for _, p := range dotPaths {
+
+		mergeMap := make(map[int][]int)
+
+		for _, f := range p {
+			mergeMap[f.from] = append(mergeMap[f.from], f.cost)
+		}
+
+		for mid, m := range mergeMap {
+			nodesSplit[mid] = append(nodesSplit[mid], m)
+		}
+	}
+
+	dotRules := []string{}
+
+	if len(dotPaths) == 0 {
+		dotRules = append(dotRules, fmt.Sprintf("\"%s\"", g.command.Prefix))
+	}
+
+	for i, p := range dotPaths {
+		paramDest := g.vToParam(i)
+
+		if paramDest == nil {
+			continue
+		}
+
+		dstStrs := []string{}
+
+		if paramDest.Type == paramTypePlain {
+			dstStrs = append(dstStrs, fmt.Sprintf("<%s>", paramDest.NameDesc.Name))
+		} else if paramDest.Type == paramTypeSelection {
+
+			splited := nodesSplit[i]
+			names, _, _ := rangeDecodeSelection(paramDest.Range)
+
+			if len(splited) == 0 {
+				dstStrs = append(dstStrs, strings.Join(names, `\l`)+`\l`)
+			} else {
+				for _, seg := range splited {
+					sels := []string{}
+					for _, unit := range seg {
+						if unit-1 >= 0 && unit-1 < len(names) {
+							sels = append(sels, names[unit-1])
+						}
+					}
+					dstStrs = append(dstStrs, strings.Join(sels, `\l`)+`\l`)
+				}
+			}
+		}
+
+		mergeMap := make(map[int][]int)
+
+		for _, f := range p {
+			mergeMap[f.from] = append(mergeMap[f.from], f.cost)
+		}
+
+		for mid, m := range mergeMap {
+
+			srcStr := "?"
+
+			paramSrc := g.vToParam(mid)
+			if paramSrc != nil {
+				if paramSrc.Type == paramTypePlain {
+					srcStr = fmt.Sprintf("<%s>", paramSrc.NameDesc.Name)
+				} else if paramSrc.Type == paramTypeSelection {
+					names, _, _ := rangeDecodeSelection(paramSrc.Range)
+
+					sels := []string{}
+
+					for _, mm := range m {
+						if mm-1 >= 0 && mm-1 < len(names) {
+							sels = append(sels, names[mm-1])
+						}
+					}
+					srcStr = strings.Join(sels, `\l`) + `\l`
+				}
+			} else if mid == -1 {
+				srcStr = g.command.Prefix
+			} else {
+				continue
+			}
+
+			for _, dstStr := range dstStrs {
+				dotRules = append(dotRules, fmt.Sprintf("\"%s\" -> \"%s\"", srcStr, dstStr))
+			}
+		}
+	}
+
+	sort.Strings(dotRules)
+	return strings.Join(stringsUniq(dotRules), "\n") + "\n"
+}
+
+func dotWrap(dots string) string {
+
+	return `
+	
+	digraph G {
+		graph [fontsize=24 size=20]
+		edge [fontsize=24]
+		node [fontsize=24 shape="box" style="rounded" height=0.3 width=0.3]
+		ranksep = 0.3
+		nodesep = 1
+		edge [style="setlinewidth(1)" arrowhead="empty"]
+		rankdir="LR"		
+		
+	` + dots + `
+	}
+	`
+}
+
+func autoDoc(completer *Completer) {
+
+	doc := document.New()
+	tmpDir, err := os.MkdirTemp("./", "cliDotImages")
+
+	if err != nil {
+		return
+	}
+
+	images := map[string]string{}
+
+	for cid, c := range completer.schema.Commands {
+		graph := ParamGraph{}
+		graph.init(&c)
+		dot := dotWrap(graph.dot())
+
+		dotImage := path.Join(tmpDir, strconv.Itoa(cid)+".png")
+
+		if dotCmd := exec.Command("dot", "-Tpng", "-o", dotImage); dotCmd == nil {
+			continue
+		} else {
+			dotCmd.Stdin = bytes.NewBufferString(dot)
+			if err := dotCmd.Run(); err != nil {
+				fmt.Println(err.Error())
+				continue
+			}
+		}
+		images[c.Name] = dotImage
+	}
+
+	for cid, c := range completer.schema.Commands {
+		paraTitle := doc.AddParagraph()
+		paraTitle.SetStyle("Heding1")
+		run := paraTitle.AddRun()
+		run.Properties().SetBold(true)
+		run.AddText(fmt.Sprintf("%d. %s", cid+1, strings.Title(c.Name)))
+
+		paraInfo := doc.AddParagraph()
+		paraInfo.SetStyle("Normal")
+		paraInfo.Properties().SetFirstLineIndent(0.5 * measurement.Inch)
+		run = paraInfo.AddRun()
+		run.Properties().SetSize(10)
+		if c.Comment != "" {
+			run.AddText(c.Comment)
+		} else {
+			run.AddText("NO COMMENT FOUND")
+		}
+
+		if imageFike, exist := images[c.Name]; exist {
+			paraImage := doc.AddParagraph()
+			paraImage.Properties().SetFirstLineIndent(0.5 * measurement.Inch)
+			if dotDocImg, err := docCommon.ImageFromFile(imageFike); err == nil {
+				if imgRef, err := doc.AddImage(dotDocImg); err == nil {
+					if draw, err := paraImage.AddRun().AddDrawingInline(imgRef); err == nil {
+						draw.SetSize(measurement.Distance(imgRef.Size().X)/3.5, measurement.Distance(imgRef.Size().Y)/3.5)
+					}
+				}
+			}
+		}
+
+	}
+
+	// os.RemoveAll(tmpDir)
+	doc.SaveToFile("cmdline.docx")
+}
