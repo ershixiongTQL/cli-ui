@@ -2,7 +2,7 @@
 package cliui
 
 import (
-	"github.com/ershixiongTQL/cli-ui/frontEnds/telnet"
+	"github.com/ershixiongTQL/cli-ui/frontendtelnet"
 	"github.com/ershixiongTQL/cli-ui/interfaces"
 )
 
@@ -29,7 +29,7 @@ func Create(frontType string, getPrompt func() string, getBanner func() string, 
 
 	if frontType == "telnet" {
 
-		server := telnet.Server{}
+		server := frontendtelnet.Server{}
 
 		backend := backendPrepare(backendConfigPath)
 
@@ -37,7 +37,7 @@ func Create(frontType string, getPrompt func() string, getBanner func() string, 
 			return nil
 		}
 
-		server.Init(telnet.Config{
+		server.Init(frontendtelnet.Config{
 			GetPrompt: getPrompt,
 			GetBanner: getBanner,
 			Backend:   backend,

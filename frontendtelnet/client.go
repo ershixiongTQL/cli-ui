@@ -1,10 +1,10 @@
-package telnet
+package frontendtelnet
 
 import (
 	"bytes"
 	"strings"
 
-	"github.com/ershixiongTQL/cli-ui/frontends/telnet/protocol"
+	"github.com/ershixiongTQL/cli-ui/frontendtelnet/protocol"
 	"github.com/ershixiongTQL/cli-ui/history"
 )
 

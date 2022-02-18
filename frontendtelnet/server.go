@@ -1,11 +1,11 @@
-package telnet
+package frontendtelnet
 
 import (
 	"fmt"
 	"net"
 	"telnet"
 
-	"github.com/ershixiongTQL/cli-ui/frontends/telnet/protocol"
+	"github.com/ershixiongTQL/cli-ui/frontendtelnet/protocol"
 
 	"github.com/ershixiongTQL/cli-ui/interfaces"
 )
