@@ -3,7 +3,6 @@ package frontendtelnet
 import (
 	"fmt"
 	"net"
-	"telnet"
 
 	"github.com/ershixiongTQL/cli-ui/frontendtelnet/protocol"
 
@@ -13,8 +12,8 @@ import (
 //特殊字符定义
 const (
 	NULL   uint8 = 0x00
-	CR     uint8 = telnet.CR //'\r'
-	LF     uint8 = telnet.LF //'\n'
+	CR     uint8 = protocol.CR //'\r'
+	LF     uint8 = protocol.LF //'\n'
 	TAB    uint8 = '\t'
 	BS     uint8 = '\b'
 	DEL    uint8 = 0x7f
