@@ -3,7 +3,9 @@ package router
 import (
 	"fmt"
 	"io"
+	"math"
 	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -14,7 +16,8 @@ type Input interface {
 	GetUnitName() string
 }
 
-type CommandHandlerNew func(input Input, response io.StringWriter)
+type CommandHandler func(Input, io.StringWriter)
+type CommandProgressHandler func(input Input, resultIO io.StringWriter, progressUpdate func(ratio float32)) error
 
 type CmdInput struct {
 	subMatches []string
@@ -48,13 +51,59 @@ type Unit struct {
 	name     string
 	pattern  string
 	compiled *regexp.Regexp
-	handler  CommandHandlerNew
+
+	handler         CommandHandler
+	progressHandler CommandProgressHandler
+}
+
+type progressResultIOWrapper struct {
+	io       io.StringWriter
+	progress *float32
+}
+
+func (io *progressResultIOWrapper) WriteString(str string) (n int, err error) {
+	io.io.WriteString(fmt.Sprintf("\n%6.2f%%    ", *io.progress*100))
+	n, err = io.io.WriteString(str)
+	return
+}
+
+func (u *Unit) Call(input Input, resultIO io.StringWriter) {
+
+	if u.progressHandler != nil {
+		progress := float32(0)
+		wrap := &progressResultIOWrapper{io: resultIO, progress: &progress}
+		err := u.progressHandler(input, wrap, func(ratio float32) {
+
+			if ratio == progress {
+				return
+			}
+
+			progress = ratio
+			resultIO.WriteString(fmt.Sprintf("\r%6.2f%%    ", progress*100))
+
+			progressInt := int(math.Min(float64(progress*50), float64(50)))
+
+			resultIO.WriteString(strings.Repeat("=", progressInt))
+			resultIO.WriteString(strings.Repeat("_", 50-progressInt))
+		})
+
+		if err == nil {
+			resultIO.WriteString(fmt.Sprintf("\r%6.2f%%    ", float32(100)))
+			resultIO.WriteString(strings.Repeat("=", 50))
+		}
+
+	} else if u.handler != nil {
+
+		u.handler(input, resultIO)
+
+	}
+
 }
 
 var commandSubscribersNew = make(map[string]Unit)
 var subscribersMutex sync.Mutex
 
-func UnitRegister(name string, pattern string, callback CommandHandlerNew) (err error) {
+func UnitRegister(name string, pattern string, callback interface{}) (err error) {
 
 	subscribersMutex.Lock()
 	defer subscribersMutex.Unlock()
@@ -65,11 +114,18 @@ func UnitRegister(name string, pattern string, callback CommandHandlerNew) (err 
 		return fmt.Errorf("invalid callback function")
 	}
 
+	if _, ok := callback.(func(Input, io.StringWriter)); ok {
+		unit.handler = callback.(func(Input, io.StringWriter))
+	} else if _, ok := callback.(func(Input, io.StringWriter, func(float32)) error); ok {
+		unit.progressHandler = callback.(func(Input, io.StringWriter, func(float32)) error)
+	} else {
+		return fmt.Errorf("invalid callback type")
+	}
+
 	unit.compiled = regexp.MustCompile(pattern)
 
 	unit.name = name
 	unit.pattern = pattern
-	unit.handler = callback
 
 	if _, exist := commandSubscribersNew[pattern]; exist {
 		return fmt.Errorf("pattern registered multiple times")
@@ -85,14 +141,17 @@ func Mux(command string, resultIO io.StringWriter) (err error) {
 
 	for _, unit := range commandSubscribersNew {
 		if found := unit.compiled.FindStringSubmatch(command); found != nil {
-			input := CmdInput{raw: command, subMatches: found[1:], unitName: unit.name}
-			unit.handler(&input, resultIO)
+			unit.Call(
+				&CmdInput{raw: command, subMatches: found[1:], unitName: unit.name},
+				resultIO,
+			)
 			handlerCnt++
 		}
 	}
 
 	if handlerCnt == 0 {
 		resultIO.WriteString("command invalid: " + command + "\n")
+		err = fmt.Errorf("mux nothing")
 	}
 
 	return
