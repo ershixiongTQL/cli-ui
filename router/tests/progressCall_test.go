@@ -22,7 +22,7 @@ func (b *testBuf) WriteString(str string) (l int, err error) {
 
 func progressCallSim(uniqName string, progressGet func() (float32, error)) (err error) {
 
-	router.UnitRegister(uniqName, uniqName, func(input router.Input, result io.StringWriter, progressUpdate func(float32)) error {
+	router.UnitRegisterProgress(uniqName, uniqName, func(input router.Input, result io.StringWriter, progressUpdate func(float32)) error {
 
 		for {
 			p, e := progressGet()
@@ -53,7 +53,7 @@ func progressCallSim(uniqName string, progressGet func() (float32, error)) (err 
 			}
 
 			//TEST: invalid charactor
-			founds := regexp.MustCompile(`[^\d\.%_= \n\r]`).FindAllString(str, -1)
+			founds := regexp.MustCompile(`[^\d\.%_= \n\r\[\]]`).FindAllString(str, -1)
 
 			if len(founds) != 0 {
 				testError = fmt.Errorf("invalid charactor found: %s", founds[:])
