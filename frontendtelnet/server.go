@@ -141,7 +141,10 @@ func telnetConnRoutine(conn *protocol.Conn, s *Server) {
 		case CR:
 			client.print("\n")
 			if client.getLineLen() > 0 {
-				client.exec()
+				if err := client.exec(); err != nil {
+					client.close()
+					return
+				}
 			}
 			client.printPrompt()
 		case TAB:
