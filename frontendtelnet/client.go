@@ -2,6 +2,8 @@ package frontendtelnet
 
 import (
 	"bytes"
+	"errors"
+	"regexp"
 	"strings"
 
 	"github.com/ershixiongTQL/cli-ui/frontendtelnet/protocol"
