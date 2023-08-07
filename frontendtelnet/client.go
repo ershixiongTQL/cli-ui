@@ -135,14 +135,23 @@ func (c *client) inlineDel() {
 	}
 }
 
-func (c *client) exec() {
+func (c *client) exec() error {
 	line := c.getLine()
 	c.inLineClear()
+
+	re := regexp.MustCompile(`^\s*(exit|quit)\s*$`)
+
+	if re.FindString(line) != "" {
+		return errors.New("exit")
+	}
+
 	if handler := c.server.config.Backend.CommandHandler; handler != nil {
 		handler(line, c)
 	}
 	c.WriteString("\n")
 	c.history.Append(line)
+
+	return nil
 }
 
 func (c *client) getCompletions() {
