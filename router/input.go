@@ -30,6 +30,10 @@ func (c *Input) GetName() string {
 	return c.unitName
 }
 
+func (c *Input) GetUnitName() string {
+	return c.unitName
+}
+
 func createInput(raw string, subMatches []string, name string) (input Input) {
 	input.raw = raw
 	input.subMatches = subMatches
